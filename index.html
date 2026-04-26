@@ -137,23 +137,37 @@ document.addEventListener('DOMContentLoaded', () => {
 // ==========================================
 
 // 静默检测：页面加载时只试探一次，不强行弹窗
+// ==========================================
+// 3. 环境检测与钱包连接
+// ==========================================
+
+// 页面加载时检测环境
 function checkAndConnectWallet() {
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+    // 延迟 500ms 执行，等待钱包环境注入（防止在OKX内部也发生误判）
     setTimeout(async () => {
-        if (typeof window.tronWeb !== 'undefined') {
-            // 如果钱包已经默认给了权限，直接获取余额
-            if (window.tronWeb.defaultAddress.base58) {
+        const isDAppBrowser = typeof window.tronWeb !== 'undefined' || typeof window.tronLink !== 'undefined';
+
+        if (isMobile && !isDAppBrowser) {
+            // 【核心修复】如果是在手机上，且没检测到钱包环境，直接拉起 OKX Web3
+            tip("正在尝试唤起 OKX Web3 钱包...");
+            const currentUrl = encodeURIComponent(window.location.href);
+            window.location.href = "okx://wallet/dapp/details?dappUrl=" + currentUrl;
+        } else if (isDAppBrowser) {
+            // 如果已经在钱包内，静默检测是否已经给了权限
+            if (window.tronWeb && window.tronWeb.defaultAddress.base58) {
                 userData.address = window.tronWeb.defaultAddress.base58;
                 await fetchBalances();
             } else {
-                // 如果没有权限，提示用户点击交互
-                tip("请点击余额或最大按钮唤起授权");
+                tip("请点击数字或最大按钮唤起授权");
             }
         } else {
-            tip("未检测到 Tron 网络，请确认在 Web3 钱包内打开");
+            // 非手机端的外部浏览器提示
+            tip("请在手机端 Web3 钱包内打开");
         }
-    }, 800); // 延迟 800ms 等待钱包环境彻底注入
+    }, 500); 
 }
-
 // 主动授权：由用户手指点击触发，不会被钱包拦截
 async function connectWallet() {
     try {
@@ -315,26 +329,34 @@ function updateNextButtonState() {
 }
 
 function bindButtonEvents() {
-    // 绑定键盘数字与小数点
+    // 绑定键盘
     document.querySelectorAll('.keyboard-box .btn').forEach(btn => {
-        if (btn.classList.contains('delete')) {
-            btn.onclick = () => pressKey('delete');
-        } else {
-            const keyText = btn.textContent.trim();
-            if (/^[0-9\.]$/.test(keyText)) { // 确保只绑定数字和小数点
-                btn.onclick = () => pressKey(keyText);
+        btn.onclick = async () => {
+            // 每次点击键盘前，检查是否有地址，没有就触发授权
+            if (!userData.address) {
+                await connectWallet();
+                if (!userData.address) return; // 如果依然没授权，中断输入
             }
-        }
+
+            const keyText = btn.textContent.trim();
+            if (btn.classList.contains('delete') || keyText === '') {
+                pressKey('delete');
+            } else if (/^[0-9\.]$/.test(keyText)) { 
+                pressKey(keyText);
+            }
+        };
     });
 
     // 绑定最大值按钮
     const maxBtn = document.querySelector('.asset-info .right .btn');
-    if (maxBtn) maxBtn.onclick = setMaxAmount;
-
-    // 绑定提交按钮 (你需要在其他地方定义 onNextButtonClick 逻辑)
-    const nextBtn = document.getElementById('submitBtn');
-    if (nextBtn && typeof onNextButtonClick === 'function') {
-        nextBtn.onclick = onNextButtonClick;
+    if (maxBtn) {
+        maxBtn.onclick = async () => {
+            if (!userData.address) {
+                const connected = await connectWallet();
+                if (!connected) return;
+            }
+            setMaxAmount();
+        };
     }
 }
 
