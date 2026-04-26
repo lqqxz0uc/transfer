@@ -132,47 +132,66 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ==========================================
-// 3. 钱包连接与数据获取
 // ==========================================
-function checkAndConnectWallet() {
-    let attempts = 0;
-    const maxAttempts = 20; // 最多尝试 10秒 (20 * 500ms)
+// 3. 钱包连接与数据获取 (终极修复版)
+// ==========================================
 
-    const timer = setInterval(async () => {
-        attempts++;
-        if (window.tronWeb && window.tronWeb.ready) {
-            clearInterval(timer);
-            await connectWallet();
-        } else if (window.tronLink) {
-            clearInterval(timer);
-            await connectWallet();
-        } else if (attempts >= maxAttempts) {
-            clearInterval(timer);
-            tip("未检测到钱包环境，请在 Web3 钱包内打开");
+// 静默检测：页面加载时只试探一次，不强行弹窗
+function checkAndConnectWallet() {
+    setTimeout(async () => {
+        if (typeof window.tronWeb !== 'undefined') {
+            // 如果钱包已经默认给了权限，直接获取余额
+            if (window.tronWeb.defaultAddress.base58) {
+                userData.address = window.tronWeb.defaultAddress.base58;
+                await fetchBalances();
+            } else {
+                // 如果没有权限，提示用户点击交互
+                tip("请点击余额或最大按钮唤起授权");
+            }
+        } else {
+            tip("未检测到 Tron 网络，请确认在 Web3 钱包内打开");
         }
-    }, 500);
+    }, 800); // 延迟 800ms 等待钱包环境彻底注入
 }
 
+// 主动授权：由用户手指点击触发，不会被钱包拦截
 async function connectWallet() {
     try {
-        // OKX / TronLink 授权请求
-        if (window.tronLink) {
-            const res = await window.tronLink.request({ method: 'tron_requestAccounts' });
-            if (res && res.code === 200) {
-                window.tronWeb = window.tronLink.tronWeb;
+        if (typeof window.tronWeb === 'undefined') {
+            tip("请确保钱包网络已切换至 Tron (TRX)！");
+            return false;
+        }
+
+        let address = window.tronWeb.defaultAddress.base58;
+
+        // 如果还没地址，主动向钱包请求权限弹窗
+        if (!address && window.tronLink) {
+            try {
+                // 唤起授权弹窗
+                const res = await window.tronLink.request({ method: 'tron_requestAccounts' });
+                if (res && res.code === 200) {
+                    address = window.tronWeb.defaultAddress.base58;
+                }
+            } catch (authError) {
+                console.warn("用户拒绝授权或请求失败:", authError);
+                tip("需要授权才能获取余额");
+                return false;
             }
         }
 
-        // 验证是否获取到地址
-        if (window.tronWeb && window.tronWeb.defaultAddress.base58) {
-            userData.address = window.tronWeb.defaultAddress.base58;
-            await fetchBalances(); // 获取余额
+        if (address) {
+            userData.address = address;
+            await fetchBalances();
+            tip("授权成功！");
+            return true;
         } else {
-            tip("请授权连接钱包");
+            tip("未能获取到钱包地址");
+            return false;
         }
     } catch (error) {
-        console.error("钱包连接失败:", error);
-        tip("钱包连接失败，请重试");
+        console.error("连接异常:", error);
+        tip("连接异常，请切换网络后重试");
+        return false;
     }
 }
 
